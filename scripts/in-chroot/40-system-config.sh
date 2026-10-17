@@ -12,12 +12,14 @@
 #   ROOTFS_PASSWORD 由 workflow 通过 env 传入（不落盘；为空则回退到上游的 password）
 #
 # 在 chroot 内执行:
-#   chroot "$MOUNT" env ROOTFS_PASSWORD=... /root/sheng-build/in-chroot/40-system-config.sh
+#   chroot "$MOUNT" env ROOTFS_PASSWORD=... /root/vermeer-build/in-chroot/40-system-config.sh
 set -euo pipefail
 
-BUILD_DIR="${BUILD_DIR:-/root/sheng-build}"
+BUILD_DIR="${BUILD_DIR:-/root/vermeer-build}"
 # shellcheck source=/dev/null
 source "$BUILD_DIR/common/distro-env.sh"
+# shellcheck source=/dev/null
+source "$BUILD_DIR/common/device-env.sh"
 # shellcheck source=/dev/null
 source "$BUILD_DIR/in-chroot/lib-apt.sh"
 
@@ -164,46 +166,47 @@ esac
 # ---------------------------------------------------------------------------
 # 5b) 设备形态与显示缩放（libdeviceinfo）
 # ---------------------------------------------------------------------------
-# lomiri-session 的 GRID_UNIT_PX 取自 `device-info get GridUnit`，而
-# /etc/deviceinfo/default.yaml 的兜底档位是 desktop（GridUnit 8，即参考表里
-# “96–150 PPI 普通笔记本”那一行）。sheng 是 12.4" 3048x2032 = 295 PPI 平板，
-# 按 UBports 的参考表（299 PPI 的 Nexus 10 用 20）应为 20–21。
-# 不配置的后果：整套 UI 只有应有尺寸的 1/2.6，触控命中区域小到没法用。
+# lomiri-session 的 GRID_UNIT_PX 取自 `device-info get GridUnit`，
+# 不配置时兜底是 desktop 档（GridUnit 8），在手机上整套 UI 会小到没法点。
+#
+# K70 = 6.67" 1220x2712 ≈ 446 PPI 的手持机：按 UBports 参考表（423 PPI 的
+# Nexus 5X 用 18）取 18。
 #
 # 匹配方式：拿 /proc/device-tree/model 去比 yaml 里的 Names，
-# sheng 的 DT model 是 “Xiaomi Pad 6S Pro 12.4”。
+# vermeer 的 DT model 是 “Poco F6 Pro”（这棵树里同时保留了 K70 的别名）。
 log "写入设备形态与显示参数（libdeviceinfo）"
 install -d /etc/deviceinfo/devices
-cat > /etc/deviceinfo/devices/sheng.yaml <<'EOF'
-sheng:
+cat > /etc/deviceinfo/devices/"$DEVICE_SLUG".yaml <<'EOF'
+vermeer:
   Names:
-    - "Xiaomi Pad 6S Pro 12.4"
-    - "xiaomi,sheng"
-    - "Xiaomi-Pad6SPro"
-    - "sheng"
-  PrettyName: "Xiaomi Pad 6S Pro 12.4"
-  DeviceType: tablet
-  GridUnit: 21
-  WebkitDpr: 2
+    - "Poco F6 Pro"
+    - "Xiaomi Redmi K70"
+    - "xiaomi,vermeer"
+    - "Xiaomi-K70"
+    - "vermeer"
+  PrettyName: "Xiaomi Redmi K70 / POCO F6 Pro"
+  DeviceType: phone
+  GridUnit: 18
+  WebkitDpr: 3
   SupportedOrientations:
     - Portrait
     - InvertedPortrait
     - Landscape
     - InvertedLandscape
-  PrimaryOrientation: Landscape
+  PrimaryOrientation: Portrait
 EOF
 # FORM_FACTOR 取的是 chassis，hostnamectl 读 /etc/machine-info
-printf 'CHASSIS=tablet\n' > /etc/machine-info
+printf 'CHASSIS=handset\n' > /etc/machine-info
 
 if [[ "$DESKTOP" == "Lomiri" ]]; then
   # lomiri-session 开头就 source 这个文件，DEFAULT_GRID_UNIT_PX 会直接短路掉
   # device-info 探测（脚本里是 ${DEFAULT_GRID_UNIT_PX:-$(device-info ...)}）。
   # 这是保底：即便上面那份 yaml 因 DT model 改名而匹配不上，缩放依然正确。
-  log "写入 Lomiri 会话缩放覆盖 GRID_UNIT_PX=21"
+  log "写入 Lomiri 会话缩放覆盖 GRID_UNIT_PX=18"
   cat > /etc/default/lomiri-desktop-session <<'EOF'
 # 由 /usr/bin/lomiri-session 开头 source；DEFAULT_* 优先级高于 device-info 探测。
-DEFAULT_GRID_UNIT_PX=21
-DEFAULT_NATIVE_ORIENTATION=Landscape
+DEFAULT_GRID_UNIT_PX=18
+DEFAULT_NATIVE_ORIENTATION=Portrait
 EOF
 fi
 

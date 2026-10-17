@@ -1,0 +1,8 @@
+Package: linux-xiaomi-vermeer
+Version: 7.3.0
+Architecture: arm64
+Maintainer: yalei16
+Section: kernel
+Description: Kernel and modules for Xiaomi Redmi K70 / POCO F6 Pro (vermeer)
+  This is a placeholder control file: scripts/packages/build-kernel.sh generates
+  a real control with the compiled kernelrelease as Version.

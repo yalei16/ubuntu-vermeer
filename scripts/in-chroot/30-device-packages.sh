@@ -1,21 +1,30 @@
 #!/usr/bin/env bash
 # 30-device-packages.sh —— 安装全部设备功能包（/tmp/debs/*.deb）并做设备侧收尾
 #
-# 对应上游 debian-sheng 的 “Install All .deb Packages” + “Fix Permissions” +
-# “Enable Sensor Services” 三步，差异：
-#   * 依赖解析失败时报错终止（上游是 `apt-get install /tmp/*.deb || apt-get install -f -y`
-#     之后无脑 rm，可能在半配置状态下静默产出坏镜像）
-#   * 补上上游缺失的 depmod（内核模块索引）
+# 相对 sheng 版本的改动：
+#   * 必需包换成 vermeer 的：linux-xiaomi-vermeer / firmware-xiaomi-vermeer / fastrpc
+#   * 删掉 sheng 的 sheng-sensors / sheng-devauth 服务启用（K70 没有对应物）
+#   * 新增「modem 用户态」这一段：rmtfs / tqftpserv / qrtr-tools 是 SM8550 上
+#     让 ADSP/MPSS 真正跑起来的前置条件（DSP 固件按需通过 TFTP 拉取）。
+#     Ubuntu 归档里不一定都有这些包，因此是尽力而为 + 明确日志，不阻断构建。
 #
 # 在 chroot 内执行:
-#   chroot "$MOUNT" /root/sheng-build/in-chroot/30-device-packages.sh
+#   chroot "$MOUNT" /root/vermeer-build/in-chroot/30-device-packages.sh
 set -euo pipefail
 
-BUILD_DIR="${BUILD_DIR:-/root/sheng-build}"
+BUILD_DIR="${BUILD_DIR:-/root/vermeer-build}"
 # shellcheck source=/dev/null
 source "$BUILD_DIR/common/distro-env.sh"
 # shellcheck source=/dev/null
+source "$BUILD_DIR/common/device-env.sh"
+# shellcheck source=/dev/null
 source "$BUILD_DIR/in-chroot/lib-apt.sh"
+
+if [[ -f /root/build.env ]]; then
+  # shellcheck source=/dev/null
+  source /root/build.env
+fi
+INSTALL_MODEM_STACK="${INSTALL_MODEM_STACK:-true}"
 
 shopt -s nullglob
 debs=(/tmp/debs/*.deb)
@@ -34,14 +43,13 @@ if ! apt_install "${debs[@]}"; then
   apt_install "${debs[@]}" || die "设备包安装失败，请检查上面的依赖错误"
 fi
 
-# 版本断言：GNOME 桌面会把发行版的 iio-sensor-proxy 作为 Recommends 带进来，
-# 必须以本仓库构建的 9999x 版本覆盖（发行版版没有 SSC 后端 → 传感器不工作）。
-# 这里显式断言，避免"装成了发行版版"这种 90-verify 查不出来的坏镜像。
+# 版本断言：GNOME 桌面会把发行版的 iio-sensor-proxy 作为 Recommends 带进来。
+# 发行版版没有 SSC 后端，传感器链路不工作 → 这里必须是我们构建的 9999x 版本。
 IIO_VER="$(dpkg-query -W -f='${Version}' iio-sensor-proxy 2>/dev/null || true)"
 case "$IIO_VER" in
   "")    warn "iio-sensor-proxy 未安装（本仓库的 deb 可能没装上）" ;;
   9999*) log "iio-sensor-proxy 使用本仓库版本: $IIO_VER" ;;
-  *)     die "iio-sensor-proxy 装成了发行版版本（$IIO_VER），不带 SSC 后端" ;;
+  *)     warn "iio-sensor-proxy 是发行版版本（$IIO_VER），不带 SSC 后端；K70 暂未提供传感器注册表，先不阻断" ;;
 esac
 
 # 权限修复：dpkg-deb 打包时统一 644，可执行文件需要显式补权限
@@ -55,29 +63,41 @@ for f in /usr/bin/adsprpcd /usr/libexec/iio-sensor-proxy /usr/bin/monitor-sensor
   fi
 done
 
-# depmod（上游缺失）：让 /usr/lib/modules/<kver>/modules.dep 等索引在镜像内就生成
+# depmod：让 /usr/lib/modules/<kver>/modules.dep 等索引在镜像内就生成
 KVER="$(ls -1 /usr/lib/modules 2>/dev/null | head -n1 || true)"
 if [[ -n "$KVER" ]]; then
   log "为内核 $KVER 生成模块依赖索引（depmod）"
   depmod -a "$KVER" || warn "depmod 返回非 0（可能已有现成索引）"
-  # 与 90-verify.sh 的判定保持一致：这里就硬失败，别等到最后一步才炸
   [[ -f "/usr/lib/modules/$KVER/modules.dep" ]] \
     || die "modules.dep 未生成（$KVER）：模块在设备上无法自动加载"
 else
   warn "未找到 /usr/lib/modules/*，内核包可能没有装上"
 fi
 
-# 传感器服务（与上游一致）# 拼写务必照抄：unit 文件名与二进制都是 adsprpcd（a-d-s-p-r-p-c-d），
-# 上游 workflow 的 enable 步骤把它写成 adsrpcd（少一个 rp）→ 那个 unit 永远启用不了。
-# 这里**写死正确文件名**并先判断存在性（不要用通配符：adsrp*cd 与真实名在第 4 个字符
-# 就不同，永远匹配不上，会静默走 warn 分支）。
+# aDSP RPC 守护进程（传感器 / fastrpc 链路）
 if [[ -f /usr/lib/systemd/system/adsprpcd-sensorspd.service ]]; then
   systemctl enable adsprpcd-sensorspd.service || warn "启用 adsprpcd-sensorspd 失败"
 else
   warn "未找到 adsprpcd-sensorspd.service（fastrpc 包可能没装上）"
 fi
-if [[ -f /usr/lib/systemd/system/sheng-devauth.service ]]; then
-  systemctl enable sheng-devauth.service || warn "启用 sheng-devauth 失败"
+
+# ── modem 用户态（4G 的前置条件，不是充分条件）──────────────────────────────
+# 注意：K70 主线现在还没有把 &ipa 节点打开，所以即使这些服务跑起来，
+# `mmcli -L` 依然可能看不到 modem。这里的目的是「把地基铺好」，
+# 让后续在设备树上补 IPA/IPA SMMU 后不需要再改镜像。
+if [[ "$INSTALL_MODEM_STACK" == "true" ]]; then
+  log "安装 modem 用户态（rmtfs / tqftpserv / qrtr-tools，缺失则跳过）"
+  apt_install_best_effort rmtfs tqftpserv qrtr-tools msm-firmware-loader
+  for svc in rmtfs.service tqftpserv.service; do
+    if [[ -f "/usr/lib/systemd/system/$svc" || -f "/lib/systemd/system/$svc" ]]; then
+      systemctl enable "$svc" || warn "启用 $svc 失败"
+      log "已启用 $svc"
+    else
+      warn "缺少 $svc（对应包没装上，实际设备上 DSP 固件可能拉不起来）"
+    fi
+  done
+else
+  log "INSTALL_MODEM_STACK=false，跳过 modem 用户态"
 fi
 
 log "设备包安装完成"

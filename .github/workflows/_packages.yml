@@ -1,51 +1,88 @@
-name: _Build Device Packages (Ubuntu)
+name: _Build Device Packages (Ubuntu / vermeer)
 
 # 可复用工作流：构建 Ubuntu 侧的全部设备功能包（.deb）
-# 由 rootfs.yml 通过 workflow_call 调用。本仓库刻意不设 rootfs-lite.yml：
-# 上游是用"再复制一份 45 KB YAML"来实现测试模式，这里改为 rootfs.yml 的
-# upload_artifacts 输入项。
+# 由 rootfs.yml 通过 workflow_call 调用。
 #
-# 作业与上游 debian-sheng 一一对应：
-#   build-kernel(custom_build) / build-fastrpc / build-libssc /
-#   build-iio-sensor-proxy / build-sheng-sensors / build-sheng-devauth /
-#   package-alsa / package-firmware / fetch-xiaomi-debs
+# 相对 sheng 版本删掉的作业（这些包是 sheng 专有的，K70 上没有对应物）：
+#   build-sheng-sensors（SSC 传感器注册表：K70 的 registry 还没人提取）
+#   build-sheng-devauth（sheng 的 qtee/设备认证服务）
+#   package-alsa       （sheng 的 WCD938X UCM2：K70 音频链路不同，且主线尚未打通）
+#   fetch-xiaomi-debs  （ianchb 的 xiaomi-* 快充/触控/笔/指纹包，按 sheng 的硬件写死）
 on:
+  # 由 rootfs.yml 调用
   workflow_call:
     inputs:
       kernel_source:
-        description: 'prebuilt 或 custom_build'
+        description: 'custom_build 或 prebuilt'
         required: false
         type: string
-        default: 'prebuilt'
+        default: 'custom_build'
       kernel_repo:
-        description: '自定义内核仓库 URL（kernel_source=custom_build 时使用）'
+        description: '内核仓库 URL（custom_build 时使用）'
         required: false
         type: string
-        default: 'https://github.com/ianchb/sm8550-mainline'
+        default: 'https://github.com/Xlie-Electronic-Customs/linux'
       kernel_branch:
         description: '内核仓库分支'
         required: false
         type: string
-        default: 'sheng-7.2.6'
-      kernel_config:
-        description: '内核配置文件（仓库内文件名）'
+        default: 'master'
+      kernel_config_fragments:
+        description: '树内配置片段（空格分隔，按顺序叠加在 defconfig 上）'
         required: false
         type: string
-        default: 'sm8550.config'
+        default: 'sm8550.config hardening.config'
       firmware_repo:
         description: '设备固件仓库 URL'
         required: false
         type: string
-        default: 'https://github.com/ianchb/sheng-firmware'
+        default: 'https://github.com/Xlie-Electronic-Customs/linux-firmware-xiaomi-vermeer'
       firmware_branch:
         description: '固件仓库分支'
         required: false
         type: string
-        default: 'master'
+        default: 'main'
     outputs:
       kernel_version:
         description: 'custom_build 时的内核版本'
         value: ${{ jobs.build-kernel.outputs.kernel_version }}
+
+  # 也可以单独手动跑，只产出设备包（不组装 rootfs）——调固件/内核时省时间
+  workflow_dispatch:
+    inputs:
+      kernel_source:
+        description: 'custom_build（编内核，约 40–60 分钟）或 skip（只打包固件/fastrpc 等）'
+        required: true
+        type: choice
+        default: 'skip'
+        options:
+          - 'skip'
+          - 'custom_build'
+      kernel_repo:
+        description: '内核仓库 URL'
+        required: false
+        type: string
+        default: 'https://github.com/Xlie-Electronic-Customs/linux'
+      kernel_branch:
+        description: '内核仓库分支'
+        required: false
+        type: string
+        default: 'master'
+      kernel_config_fragments:
+        description: '树内配置片段（空格分隔）'
+        required: false
+        type: string
+        default: 'sm8550.config hardening.config'
+      firmware_repo:
+        description: '设备固件仓库 URL'
+        required: false
+        type: string
+        default: 'https://github.com/Xlie-Electronic-Customs/linux-firmware-xiaomi-vermeer'
+      firmware_branch:
+        description: '固件仓库分支'
+        required: false
+        type: string
+        default: 'main'
 
 permissions:
   contents: read
@@ -79,10 +116,10 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/.ccache
-          key: ccache-kernel-ubuntu-${{ inputs.kernel_branch }}-${{ inputs.kernel_config }}-${{ hashFiles(inputs.kernel_config) }}
+          key: ccache-kernel-vermeer-${{ inputs.kernel_branch }}-${{ hashFiles('vermeer-extra.config') }}
           restore-keys: |
-            ccache-kernel-ubuntu-${{ inputs.kernel_branch }}-${{ inputs.kernel_config }}-
-            ccache-kernel-ubuntu-
+            ccache-kernel-vermeer-${{ inputs.kernel_branch }}-
+            ccache-kernel-vermeer-
 
       - name: Build Kernel
         id: build
@@ -90,7 +127,7 @@ jobs:
         env:
           KERNEL_REPO: ${{ inputs.kernel_repo }}
           KERNEL_BRANCH: ${{ inputs.kernel_branch }}
-          KERNEL_CONFIG: ${{ inputs.kernel_config }}
+          KERNEL_CONFIG_FRAGMENTS: ${{ inputs.kernel_config_fragments }}
         run: |
           chmod +x scripts/packages/build-kernel.sh
           ./scripts/packages/build-kernel.sh
@@ -100,7 +137,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: kernel-custom-deb
-          path: linux-xiaomi-sheng.deb
+          path: linux-xiaomi-vermeer.deb
           retention-days: 3
           if-no-files-found: error
 
@@ -109,7 +146,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: kernel-custom-image
-          path: Image.gz-dtb_sheng
+          path: Image.gz-dtb_vermeer
           retention-days: 3
           if-no-files-found: error
 
@@ -186,71 +223,8 @@ jobs:
           retention-days: 3
           if-no-files-found: error
 
-  build-sheng-sensors:
-    name: Package sheng-sensors
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v7
-      - name: Install Build Tools
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq dpkg-dev
-      - name: Package
-        run: |
-          chmod +x scripts/packages/build-sheng-sensors.sh
-          ./scripts/packages/build-sheng-sensors.sh
-      - uses: actions/upload-artifact@v7
-        with:
-          name: sheng-sensors-deb
-          path: sheng-sensors_*.deb
-          retention-days: 3
-          if-no-files-found: error
-
-  build-sheng-devauth:
-    name: Build sheng-devauth
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-      - name: Install Build Tools
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq build-essential dpkg-dev git
-      - name: Build
-        run: |
-          chmod +x scripts/packages/build-sheng-devauth.sh
-          ./scripts/packages/build-sheng-devauth.sh
-      - uses: actions/upload-artifact@v7
-        with:
-          name: sheng-devauth-deb
-          path: sheng-devauth.deb
-          retention-days: 3
-          if-no-files-found: error
-
-  package-alsa:
-    name: Package alsa-xiaomi-sheng
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v7
-      - name: Install Build Tools
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq dpkg-dev
-      - name: Package
-        run: |
-          chmod +x scripts/packages/build-alsa.sh
-          ./scripts/packages/build-alsa.sh
-      - uses: actions/upload-artifact@v7
-        with:
-          name: alsa-xiaomi-sheng-deb
-          path: alsa-xiaomi-sheng.deb
-          retention-days: 3
-          if-no-files-found: error
-
   package-firmware:
-    name: Package firmware-xiaomi-sheng
+    name: Package firmware-xiaomi-vermeer
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     steps:
@@ -268,26 +242,7 @@ jobs:
           ./scripts/packages/build-firmware.sh
       - uses: actions/upload-artifact@v7
         with:
-          name: firmware-xiaomi-sheng-deb
-          path: firmware-xiaomi-sheng.deb
-          retention-days: 3
-          if-no-files-found: error
-
-  fetch-xiaomi-debs:
-    name: Fetch xiaomi-* packages
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-      - name: Fetch
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          chmod +x scripts/packages/fetch-xiaomi-debs.sh
-          ./scripts/packages/fetch-xiaomi-debs.sh
-      - uses: actions/upload-artifact@v7
-        with:
-          name: xiaomi-debs
-          path: deb-out/*.deb
+          name: firmware-xiaomi-vermeer-deb
+          path: firmware-xiaomi-vermeer.deb
           retention-days: 3
           if-no-files-found: error

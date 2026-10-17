@@ -28,12 +28,12 @@ mount -t sysfs sys     "$MOUNT/sys"
 rm -f "$MOUNT/etc/resolv.conf"
 install -m644 /etc/resolv.conf "$MOUNT/etc/resolv.conf"
 
-# 构建脚本入镜像（/root/sheng-build）
-install -d "$MOUNT/root/sheng-build"
-cp -a "$REPO_ROOT/scripts/common"    "$MOUNT/root/sheng-build/"
-cp -a "$REPO_ROOT/scripts/in-chroot" "$MOUNT/root/sheng-build/"
-cp -a "$REPO_ROOT/scripts/lists"     "$MOUNT/root/sheng-build/"
-chmod -R 755 "$MOUNT/root/sheng-build"
+# 构建脚本入镜像（/root/vermeer-build）
+install -d "$MOUNT/root/vermeer-build"
+cp -a "$REPO_ROOT/scripts/common"    "$MOUNT/root/vermeer-build/"
+cp -a "$REPO_ROOT/scripts/in-chroot" "$MOUNT/root/vermeer-build/"
+cp -a "$REPO_ROOT/scripts/lists"     "$MOUNT/root/vermeer-build/"
+chmod -R 755 "$MOUNT/root/vermeer-build"
 
 # 设备包 .deb 入镜像 /tmp/debs
 if [[ -d "$REPO_ROOT/debs" ]]; then
@@ -42,10 +42,10 @@ if [[ -d "$REPO_ROOT/debs" ]]; then
   log "已拷入 $(find "$MOUNT/tmp/debs" -name '*.deb' | wc -l) 个 deb 到 /tmp/debs"
 fi
 
-# 其余 payload（boot.img / Image.gz-dtb_sheng 等）
+# 其余 payload（boot.img / Image.gz-dtb_vermeer 等）
 for extra in "$@"; do
   [[ -e "$extra" ]] || { warn "payload 不存在，跳过: $extra"; continue; }
-  cp -a "$extra" "$MOUNT/root/sheng-build/"
+  cp -a "$extra" "$MOUNT/root/vermeer-build/"
 done
 
 log "chroot 环境就绪: $MOUNT"

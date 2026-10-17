@@ -10,10 +10,10 @@
 # kubuntu-desktop 等硬依赖 snapd 的元包；浏览器走 Mozilla apt 源，不用 firefox 过渡包）。
 #
 # 在 chroot 内执行:
-#   chroot "$MOUNT" /root/sheng-build/in-chroot/15-nosnap.sh
+#   chroot "$MOUNT" /root/vermeer-build/in-chroot/15-nosnap.sh
 set -euo pipefail
 
-BUILD_DIR="${BUILD_DIR:-/root/sheng-build}"
+BUILD_DIR="${BUILD_DIR:-/root/vermeer-build}"
 # shellcheck source=/dev/null
 source "$BUILD_DIR/common/distro-env.sh"
 # shellcheck source=/dev/null
@@ -28,7 +28,7 @@ log "写入 apt pin（阻止 snapd 被任何来源拉入）"
 #   `release a=*` 在 Ubuntu 上**不匹配任何版本**，pin 形同虚设 —— 首次实跑时
 #   10-base.sh 的断言就是这样抓到的。`version *` 无条件匹配所有版本，跨发行版都可靠。
 cat > /etc/apt/preferences.d/nosnap.pref <<'EOF'
-# ubuntu-sheng：本系统不使用 snap，禁止安装 snapd 及其附属组件
+# ubuntu-vermeer：本系统不使用 snap，禁止安装 snapd 及其附属组件
 Package: snapd
 Pin: version *
 Pin-Priority: -1

@@ -9,12 +9,14 @@
 #   * policy-rc.d 必须已移除（否则设备上服务永远起不来）
 #
 # 在 chroot 内执行:
-#   chroot "$MOUNT" /root/sheng-build/in-chroot/90-verify.sh
+#   chroot "$MOUNT" /root/vermeer-build/in-chroot/90-verify.sh
 set -euo pipefail
 
-BUILD_DIR="${BUILD_DIR:-/root/sheng-build}"
+BUILD_DIR="${BUILD_DIR:-/root/vermeer-build}"
 # shellcheck source=/dev/null
 source "$BUILD_DIR/common/distro-env.sh"
+# shellcheck source=/dev/null
+source "$BUILD_DIR/common/device-env.sh"
 # shellcheck source=/dev/null
 source "$BUILD_DIR/in-chroot/lib-apt.sh"
 
@@ -64,9 +66,11 @@ else
 fi
 
 # 4) 设备功能包关键文件
-for f in /usr/bin/adsprpcd /usr/libexec/iio-sensor-proxy /usr/bin/ssccli \
-         /usr/lib/systemd/system/adsprpcd-sensorspd.service \
-         /usr/share/qcom/sm8550/Xiaomi/sheng; do
+#    firmware-xiaomi-vermeer 装的是 WCN7850（ath12k）与 GPU/DSP 固件，
+#    缺了它们不会影响开机，但 WiFi 一定不工作 —— 所以按硬校验处理。
+for f in /usr/bin/adsprpcd \
+         /usr/lib/firmware/ath12k/WCN7850 \
+         /usr/lib/firmware/qcom/sm8550/xiaomi/vermeer; do
   if [[ -e "$f" ]]; then
     pass "存在 $f"
   else
@@ -124,26 +128,26 @@ if [[ "${DESKTOP:-server}" == "Lomiri" ]]; then
 fi
 
 # 4c) 设备形态与显示缩放（Lomiri UI 尺寸正确的前提）
-if [[ -f /etc/deviceinfo/devices/sheng.yaml ]]; then
+if [[ -f "/etc/deviceinfo/devices/${DEVICE_SLUG}.yaml" ]]; then
   pass "deviceinfo 设备描述已写入"
-  if grep -qE '^[[:space:]]*GridUnit:[[:space:]]*21' /etc/deviceinfo/devices/sheng.yaml; then
-    pass "GridUnit = 21（295 PPI 平板）"
+  if grep -qE '^[[:space:]]*GridUnit:[[:space:]]*18' "/etc/deviceinfo/devices/${DEVICE_SLUG}.yaml"; then
+    pass "GridUnit = 18（446 PPI 手机）"
   else
-    fail "GridUnit 不是 21，Lomiri UI 会小 2.6 倍"
+    fail "GridUnit 不是 18，Lomiri UI 会明显偏小"
   fi
 else
-  fail "缺少 /etc/deviceinfo/devices/sheng.yaml"
+  fail "缺少 /etc/deviceinfo/devices/${DEVICE_SLUG}.yaml"
 fi
-if grep -qE '^[[:space:]]*CHASSIS=tablet' /etc/machine-info 2>/dev/null; then
-  pass "CHASSIS=tablet"
+if grep -qE '^[[:space:]]*CHASSIS=handset' /etc/machine-info 2>/dev/null; then
+  pass "CHASSIS=handset"
 else
-  fail "/etc/machine-info 未设 CHASSIS=tablet"
+  fail "/etc/machine-info 未设 CHASSIS=handset"
 fi
 if [[ "${DESKTOP:-server}" == "Lomiri" ]]; then
-  if grep -qE '^DEFAULT_GRID_UNIT_PX=21' /etc/default/lomiri-desktop-session 2>/dev/null; then
+  if grep -qE '^DEFAULT_GRID_UNIT_PX=18' /etc/default/lomiri-desktop-session 2>/dev/null; then
     pass "lomiri 会话缩放覆盖已写入"
   else
-    fail "缺少 /etc/default/lomiri-desktop-session 的 DEFAULT_GRID_UNIT_PX=21"
+    fail "缺少 /etc/default/lomiri-desktop-session 的 DEFAULT_GRID_UNIT_PX=18"
   fi
 fi
 

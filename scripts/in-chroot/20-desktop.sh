@@ -11,10 +11,10 @@
 #   QUIET_BOOT      true/false（true 时安装 plymouth）
 #
 # 在 chroot 内执行:
-#   chroot "$MOUNT" /root/sheng-build/in-chroot/20-desktop.sh
+#   chroot "$MOUNT" /root/vermeer-build/in-chroot/20-desktop.sh
 set -euo pipefail
 
-BUILD_DIR="${BUILD_DIR:-/root/sheng-build}"
+BUILD_DIR="${BUILD_DIR:-/root/vermeer-build}"
 # shellcheck source=/dev/null
 source "$BUILD_DIR/common/distro-env.sh"
 # shellcheck source=/dev/null

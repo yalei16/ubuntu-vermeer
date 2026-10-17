@@ -1,20 +1,30 @@
 #!/usr/bin/env bash
-# 打包 firmware-xiaomi-sheng（设备固件与配置：ath12k/WCN7850、QCA 蓝牙、Cirrus DSP 等）
+# 打包 firmware-xiaomi-vermeer（K70 / POCO F6 Pro 的固件 blob 与配置）
 #
-# 对应上游 debian-sheng 的 “Package firmware-xiaomi-sheng” 步骤：
-#   克隆 firmware 仓库 → 全部内容装到 /usr/lib/firmware → dpkg-deb
-# control 里保留 Debian 语义的 Conflicts/Replaces: linux-firmware
+# 与 sheng 版本的差别：
+#   * 上游固件仓库从 ianchb/sheng-firmware 换成 XEC 的 linux-firmware-xiaomi-vermeer
+#   * 该仓库把固件放在子目录 xiaomi-vermeer/ 下（ath12k/、qcom/），
+#     而 sheng 的仓库根就是固件根 —— 必须只铺子目录内容，否则设备上
+#     会出现 /usr/lib/firmware/xiaomi-vermeer/ath12k/... 这种驱动永远找不到的路径
 #
 # 需要环境变量：
-#   FIRMWARE_REPO   固件仓库 URL（默认 https://github.com/ianchb/sheng-firmware）
-#   FIRMWARE_BRANCH 分支（默认 master）
+#   FIRMWARE_REPO    固件仓库 URL（默认见 device-env.sh）
+#   FIRMWARE_BRANCH  分支（默认 main）
+#   FIRMWARE_SUBDIR  固件在仓库里的子目录（默认 xiaomi-vermeer；留空=仓库根）
 #
 # 用法: scripts/packages/build-firmware.sh
 set -euo pipefail
 
-PKG=firmware-xiaomi-sheng
-FIRMWARE_REPO="${FIRMWARE_REPO:-https://github.com/ianchb/sheng-firmware}"
-FIRMWARE_BRANCH="${FIRMWARE_BRANCH:-master}"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../common/device-env.sh
+source "$HERE/../common/device-env.sh"
+
+PKG="$FIRMWARE_DEB"
+FIRMWARE_REPO="${FIRMWARE_REPO:-$DEFAULT_FIRMWARE_REPO}"
+FIRMWARE_BRANCH="${FIRMWARE_BRANCH:-$DEFAULT_FIRMWARE_BRANCH}"
+FIRMWARE_SUBDIR="${FIRMWARE_SUBDIR:-xiaomi-vermeer}"
+
+PKDIR="$(cd "$HERE/../.." && pwd)/$PKG"
 OUT="${PWD}/${PKG}.deb"
 BUILD="${PWD}/build/${PKG}"
 SRC="${PWD}/build/firmware-src"
@@ -25,8 +35,17 @@ mkdir -p "$BUILD/usr/lib/firmware"
 echo "[build-firmware] 克隆 $FIRMWARE_REPO ($FIRMWARE_BRANCH)"
 git clone --depth 1 --branch "$FIRMWARE_BRANCH" "$FIRMWARE_REPO" "$SRC"
 
-cp -a "$PKG/DEBIAN" "$BUILD/"
-cp -a "$SRC/." "$BUILD/usr/lib/firmware/"
+FWROOT="$SRC"
+if [[ -n "$FIRMWARE_SUBDIR" ]]; then
+  FWROOT="$SRC/$FIRMWARE_SUBDIR"
+  [[ -d "$FWROOT" ]] || {
+    echo "[build-firmware] 固件子目录不存在: $FWROOT" >&2
+    echo "[build-firmware] 仓库根内容：$(ls -1 "$SRC" | tr '\n' ' ')" >&2
+    exit 1
+  }
+fi
+
+cp -a "$FWROOT/." "$BUILD/usr/lib/firmware/"
 rm -rf "$BUILD/usr/lib/firmware/.git" \
        "$BUILD/usr/lib/firmware/.github" \
        "$BUILD/usr/lib/firmware/.gitignore"
@@ -35,6 +54,7 @@ rm -rf "$BUILD/usr/lib/firmware/.git" \
 find "$BUILD" -type d -exec chmod 755 {} +
 find "$BUILD" -type f -exec chmod 644 {} +
 
+cp -a "$PKDIR/DEBIAN" "$BUILD/"
 dpkg-deb --build --root-owner-group "$BUILD" "$OUT"
 echo "[build-firmware] 产出 $OUT ($(du -h "$OUT" | cut -f1))"
 find "$BUILD/usr/lib/firmware" -maxdepth 1 -mindepth 1 -printf '    %f\n' | sort

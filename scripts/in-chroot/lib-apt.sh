@@ -27,7 +27,7 @@ prepare_apt() {
     warn "已写入 policy-rc.d（将在系统配置阶段移除）"
   fi
   if [[ -d /etc/needrestart/conf.d ]]; then
-    printf '$nrconf{restart} = "a";\n' > /etc/needrestart/conf.d/99-sheng-noninteractive.conf
+    printf '$nrconf{restart} = "a";\n' > /etc/needrestart/conf.d/99-vermeer-noninteractive.conf
   fi
 }
 

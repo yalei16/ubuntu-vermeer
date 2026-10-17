@@ -1,14 +1,17 @@
-name: Build RootFS (Ubuntu)
+name: Build RootFS (Ubuntu / vermeer)
 
-# 为小米平板 6S Pro (sheng, SM8550) 构建 Ubuntu rootfs.img + boot.img
+# 为 红米 K70 / POCO F6 Pro（vermeer, SM8550）构建 Ubuntu arm64 rootfs.img + boot.img
 #
-# 结构说明（与上游 ianchb/debian-sheng 的差异）：
-#   * 设备功能包的构建抽到可复用工作流 .github/workflows/_packages.yml，
-#     本文件只负责"组装 rootfs"，避免上游那种每个 workflow 复制一份 600 行作业
-#   * 具体构建步骤全部放在 scripts/ 下的脚本里（宿主 scripts/host、镜像内 scripts/in-chroot），
+# 从 code002-2/ubuntu-sheng（小米平板 6S Pro）移植而来。结构保持不变：
+#   * 设备功能包的构建抽到可复用工作流 .github/workflows/_packages.yml
+#   * 具体构建步骤放在 scripts/ 下（宿主 scripts/host、镜像内 scripts/in-chroot），
 #     YAML 仅做编排与参数传递
-#   * 上游的 rootfs-lite.yml（测试用、不上传）在这里合并为一个输入项 upload_artifacts
-#   * Ubuntu 侧硬性要求：完全禁用 snap（见 scripts/in-chroot/15-nosnap.sh 与 90-verify.sh）
+#   * 设备名/上游地址集中在 scripts/common/device-env.sh
+#
+# 与 sheng 版的关键差异（详见 docs/移植对照.md）：
+#   * 内核默认 custom_build：vermeer 没有现成的 boot.img release
+#   * boot.img 用 header_version 4（GKI）而不是 sheng 的 0
+#   * 设备包换成 firmware/内核的 vermeer 版本，删掉 sheng 专有的传感器/alsa/xiaomi-* 包
 on:
   workflow_dispatch:
     inputs:
@@ -22,7 +25,7 @@ on:
           - '26.10 (stonking)'
           - '25.10 (questing)'
       desktop:
-        description: '桌面环境（server 为无图形界面；Lomiri = 原 Ubuntu Touch 的 Unity8，为触屏平板设计）'
+        description: '桌面环境（server 为无图形界面；Lomiri = 原 Ubuntu Touch 的 Unity8，触屏机型更合适）'
         required: true
         type: choice
         default: 'KDE Plasma'
@@ -58,7 +61,7 @@ on:
         description: '主机名'
         required: false
         type: string
-        default: 'xiaomi-sheng'
+        default: 'xiaomi-vermeer'
       password:
         description: '镜像密码（留空则用 ROOTFS_PASSWORD secret，都为空则为默认 password）；注意输入值会明文显示在运行页面'
         required: false
@@ -68,11 +71,11 @@ on:
         description: '系统语言（locale）'
         required: false
         type: choice
-        default: 'None (C.UTF-8)'
+        default: 'zh_CN.UTF-8'
         options:
           - 'None (C.UTF-8)'
-          - 'en_US.UTF-8'
           - 'zh_CN.UTF-8'
+          - 'en_US.UTF-8'
           - 'zh_TW.UTF-8'
           - 'ja_JP.UTF-8'
           - 'ko_KR.UTF-8'
@@ -100,43 +103,73 @@ on:
         type: boolean
         default: true
       kernel_source:
-        description: '内核来源（custom 分区模式不支持 prebuilt）'
+        description: '内核来源：custom_build = 用 XEC/linux 自己编（推荐）；prebuilt = 从某个 release 取现成 boot.img'
         required: true
         type: choice
-        default: 'prebuilt'
+        default: 'custom_build'
         options:
-          - 'prebuilt'
           - 'custom_build'
+          - 'prebuilt'
       kernel_repo:
-        description: '自定义内核仓库（kernel_source=custom_build 时使用）'
+        description: '内核仓库（custom_build 时使用）'
         required: false
         type: string
-        default: 'https://github.com/ianchb/sm8550-mainline'
+        default: 'https://github.com/Xlie-Electronic-Customs/linux'
       kernel_branch:
-        description: '内核分支'
+        description: '内核分支（vermeer DTS/面板驱动在这个树里）'
         required: false
         type: string
-        default: 'sheng-7.2.6'
-      kernel_config:
-        description: '内核配置文件（仓库内文件名）'
+        default: 'master'
+      kernel_config_fragments:
+        description: '树内配置片段（空格分隔，叠加在 defconfig 上）'
         required: false
         type: string
-        default: 'sm8550.config'
+        default: 'sm8550.config hardening.config'
+      kernel_releases_repo:
+        description: 'prebuilt 时的 release 仓库（owner/repo）'
+        required: false
+        type: string
+        default: ''
+      kernel_boot_pattern:
+        description: 'prebuilt 时的 boot.img 文件名'
+        required: false
+        type: string
+        default: ''
       kernel_release:
-        description: 'prebuilt 内核取哪个 release（留空则取最新；固定版本可复现构建）'
+        description: 'prebuilt 取哪个 release（留空取最新）'
         required: false
         type: string
-        default: '7.2.6'
+        default: ''
       firmware_repo:
-        description: '设备固件仓库'
+        description: '设备固件仓库（固件在仓库的 xiaomi-vermeer/ 子目录下）'
         required: false
         type: string
-        default: 'https://github.com/ianchb/sheng-firmware'
+        default: 'https://github.com/Xlie-Electronic-Customs/linux-firmware-xiaomi-vermeer'
       firmware_branch:
         description: '固件仓库分支'
         required: false
         type: string
-        default: 'master'
+        default: 'main'
+      boot_header_version:
+        description: 'boot.img 头版本（K70 原厂是 4；务必用 scripts/host/12-analyze-bootimg.py 核对原厂 boot.img）'
+        required: false
+        type: string
+        default: '4'
+      boot_pagesize:
+        description: 'boot.img 页大小（K70 原厂 4096）'
+        required: false
+        type: string
+        default: '4096'
+      extra_cmdline:
+        description: '追加内核 cmdline（调试用，例如 "earlycon console=ttyMSM0,115200"）'
+        required: false
+        type: string
+        default: ''
+      install_modem_stack:
+        description: '安装 modem 用户态（rmtfs/tqftpserv/qrtr-tools，缺失时跳过）：4G 的前置，但现在还不会自动拨号'
+        required: false
+        type: boolean
+        default: true
       rootfs_size:
         description: 'rootfs.img 初始大小（构建后会收缩，首启自动扩容）'
         required: false
@@ -166,7 +199,7 @@ jobs:
       kernel_source: ${{ inputs.kernel_source }}
       kernel_repo: ${{ inputs.kernel_repo }}
       kernel_branch: ${{ inputs.kernel_branch }}
-      kernel_config: ${{ inputs.kernel_config }}
+      kernel_config_fragments: ${{ inputs.kernel_config_fragments }}
       firmware_repo: ${{ inputs.firmware_repo }}
       firmware_branch: ${{ inputs.firmware_branch }}
 
@@ -187,8 +220,6 @@ jobs:
           SECRET_PASSWORD: ${{ secrets.ROOTFS_PASSWORD }}
         run: |
           # 密码优先级：password 输入项 > ROOTFS_PASSWORD secret > 默认 password。
-          # 输入项不是 secret（会明文显示在本次运行的输入摘要里），因此立刻 add-mask，
-          # 保证它不会出现在后续任何日志中。
           if [ -n "$IN_PASSWORD" ]; then
             echo "::add-mask::$IN_PASSWORD"
             PASSWORD="$IN_PASSWORD"
@@ -205,18 +236,25 @@ jobs:
           esac
           echo "ROOTFS_PASSWORD=$PASSWORD" >> "$GITHUB_ENV"
           if [ "${{ inputs.boot_mode }}" = "custom" ]; then
-            if [ "${{ inputs.kernel_source }}" != "custom_build" ]; then
-              echo "::error::boot_mode=custom 必须搭配 kernel_source=custom_build"
-              exit 1
-            fi
             if [ -z "${{ inputs.custom_partition }}" ]; then
               echo "::error::boot_mode=custom 时必须填写 custom_partition"
               exit 1
             fi
           fi
+          if [ "${{ inputs.kernel_source }}" = "prebuilt" ]; then
+            if [ -z "${{ inputs.kernel_releases_repo }}" ] || [ -z "${{ inputs.kernel_boot_pattern }}" ]; then
+              echo "::error::kernel_source=prebuilt 时必须给出 kernel_releases_repo 与 kernel_boot_pattern（vermeer 上游没有现成 boot.img）"
+              exit 1
+            fi
+          fi
+          for v in "${{ inputs.boot_header_version }}" "${{ inputs.boot_pagesize }}"; do
+            case "$v" in
+              ''|*[!0-9]*) echo "::error::boot_header_version / boot_pagesize 必须是十进制数字"; exit 1 ;;
+            esac
+          done
 
           # 自由文本输入会被写进镜像内的 /root/build.env 并参与 shell 片段拼接，
-          # 这里做白名单校验（与 archlinux-sheng 的校验保持一致）
+          # 这里做白名单校验
           case "${{ inputs.custom_partition }}" in
             "") : ;;
             *[!a-zA-Z0-9_-]*) echo "::error::custom_partition 只允许字母数字与 _ -（PARTLABEL 名）"; exit 1 ;;
@@ -229,6 +267,9 @@ jobs:
           esac
           case "${{ inputs.rootfs_size }}" in
             ""|*[!0-9GgMmKk]*) echo "::error::rootfs_size 只允许形如 10G / 8192M 的取值"; exit 1 ;;
+          esac
+          case "${{ inputs.extra_cmdline }}" in
+            ""|*[\;\|\&\$\`\(\)]*|\<*|\>*) echo "::error::extra_cmdline 不允许 shell 元字符"; exit 1 ;;
           esac
 
       - name: Parse Arguments
@@ -243,22 +284,10 @@ jobs:
           fi
 
           case "${{ inputs.boot_mode }}" in
-            "single (userdata)")
-              LABEL="userdata"
-              if [ "$QUIET" = "true" ]; then PATTERN="boot_sheng_singleboot_plymouth.img"; else PATTERN="boot_sheng_singleboot.img"; fi
-              ;;
-            "dual (linux)")
-              LABEL="linux"
-              if [ "$QUIET" = "true" ]; then PATTERN="boot_sheng_dualboot_plymouth.img"; else PATTERN="boot_sheng_dualboot.img"; fi
-              ;;
-            "custom")
-              LABEL="${{ inputs.custom_partition }}"
-              PATTERN=""
-              ;;
-            *)
-              echo "::error::未知的 boot_mode: ${{ inputs.boot_mode }}"
-              exit 1
-              ;;
+            "single (userdata)") LABEL="userdata" ;;
+            "dual (linux)")      LABEL="linux" ;;
+            "custom")            LABEL="${{ inputs.custom_partition }}" ;;
+            *) echo "::error::未知的 boot_mode: ${{ inputs.boot_mode }}"; exit 1 ;;
           esac
 
           SLUG="$(printf '%s' "${{ inputs.desktop }}" | tr ' ' '-')"
@@ -267,7 +296,6 @@ jobs:
             echo "series=${SERIES}"
             echo "label=${LABEL}"
             echo "quiet_boot_enabled=${QUIET}"
-            echo "boot_img_pattern=${PATTERN}"
             echo "desktop_slug=${SLUG}"
           } >> "$GITHUB_OUTPUT"
 
@@ -276,13 +304,14 @@ jobs:
       - name: Install Host Tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq mmdebstrap curl git e2fsprogs
+          sudo apt-get install -y -qq mmdebstrap curl git e2fsprogs file gzip
 
       - name: "[Prebuilt] Download Kernel & boot.img"
-        if: inputs.kernel_source != 'custom_build'
+        if: inputs.kernel_source == 'prebuilt'
         env:
           GH_TOKEN: ${{ github.token }}
-          BOOT_IMG_PATTERN: ${{ steps.parse.outputs.boot_img_pattern }}
+          BOOT_IMG_PATTERN: ${{ inputs.kernel_boot_pattern }}
+          KERNEL_RELEASES_REPO: ${{ inputs.kernel_releases_repo }}
           KERNEL_RELEASE: ${{ inputs.kernel_release }}
         run: |
           chmod +x scripts/host/10-fetch-kernel.sh
@@ -306,9 +335,19 @@ jobs:
         env:
           PARTITION_LABEL: ${{ steps.parse.outputs.label }}
           QUIET_BOOT: ${{ steps.parse.outputs.quiet_boot_enabled }}
+          BOOT_HEADER_VERSION: ${{ inputs.boot_header_version }}
+          BOOT_PAGESIZE: ${{ inputs.boot_pagesize }}
+          EXTRA_CMDLINE: ${{ inputs.extra_cmdline }}
         run: |
           chmod +x scripts/host/11-make-bootimg.sh
-          ./scripts/host/11-make-bootimg.sh Image.gz-dtb_sheng
+          ./scripts/host/11-make-bootimg.sh Image.gz-dtb_vermeer
+
+      - name: Verify boot.img Header
+        run: |
+          echo "== mkbootimg 实际写出的 boot.img 头 =="
+          python3 scripts/host/12-analyze-bootimg.py boot.img | sed 's/^/    /'
+          test -s boot.img || { echo "::error::boot.img 为空"; exit 1; }
+          test "$(head -c8 boot.img)" = "ANDROID!" || { echo "::error::boot.img 缺少 ANDROID! 魔数"; exit 1; }
 
       - name: Collect fastrpc
         uses: actions/download-artifact@v8
@@ -319,21 +358,9 @@ jobs:
       - name: Collect iio-sensor-proxy
         uses: actions/download-artifact@v8
         with: { name: iio-sensor-proxy-deb, path: debs }
-      - name: Collect sheng-sensors
+      - name: Collect firmware-xiaomi-vermeer
         uses: actions/download-artifact@v8
-        with: { name: sheng-sensors-deb, path: debs }
-      - name: Collect sheng-devauth
-        uses: actions/download-artifact@v8
-        with: { name: sheng-devauth-deb, path: debs }
-      - name: Collect alsa-xiaomi-sheng
-        uses: actions/download-artifact@v8
-        with: { name: alsa-xiaomi-sheng-deb, path: debs }
-      - name: Collect firmware-xiaomi-sheng
-        uses: actions/download-artifact@v8
-        with: { name: firmware-xiaomi-sheng-deb, path: debs }
-      - name: Collect xiaomi-* packages
-        uses: actions/download-artifact@v8
-        with: { name: xiaomi-debs, path: debs }
+        with: { name: firmware-xiaomi-vermeer-deb, path: debs }
 
       - name: Verify Collected Packages
         run: |
@@ -343,20 +370,12 @@ jobs:
 
           # 逐个断言必需包（不能用"总数 >= N"这种松阈值：丢一个 artifact 也照样通过）
           missing=0
-          for p in linux-xiaomi-sheng fastrpc libssc iio-sensor-proxy sheng-sensors \
-                   sheng-devauth alsa-xiaomi-sheng firmware-xiaomi-sheng; do
+          for p in linux-xiaomi-vermeer fastrpc libssc iio-sensor-proxy firmware-xiaomi-vermeer; do
             if ! compgen -G "debs/${p}*.deb" >/dev/null; then
               echo "::error::缺少必需的设备包: ${p}"
               missing=1
             fi
           done
-
-          xiaomi="$(find debs -maxdepth 1 -name 'xiaomi-*.deb' | wc -l)"
-          echo "xiaomi-* 包: ${xiaomi} 个"
-          if [ "$xiaomi" -lt 6 ]; then
-            echo "::warning::xiaomi-* 包少于 6 个（${xiaomi}）：快充/充电模式/触控/手写笔/指纹/键盘 中会有功能缺失"
-          fi
-
           if [ "$missing" -ne 0 ]; then
             exit 1
           fi
@@ -398,29 +417,29 @@ jobs:
           BOOT_MODE='${{ inputs.boot_mode }}'
           PARTITION_LABEL='${{ steps.parse.outputs.label }}'
           KERNEL_SOURCE='${{ inputs.kernel_source }}'
+          INSTALL_MODEM_STACK='${{ inputs.install_modem_stack }}'
           EOF
           sudo chmod 600 "$ROOTFS_MOUNT/root/build.env"
           echo "build.env 内容："
           sudo cat "$ROOTFS_MOUNT/root/build.env" | sed 's/^/    /'
 
       - name: "[chroot] Disable snap"
-        run: sudo chroot "$ROOTFS_MOUNT" /root/sheng-build/in-chroot/15-nosnap.sh
+        run: sudo chroot "$ROOTFS_MOUNT" /root/vermeer-build/in-chroot/15-nosnap.sh
 
       - name: "[chroot] Install Base Packages"
-        run: sudo chroot "$ROOTFS_MOUNT" /root/sheng-build/in-chroot/10-base.sh
+        run: sudo chroot "$ROOTFS_MOUNT" /root/vermeer-build/in-chroot/10-base.sh
 
       - name: "[chroot] Install Desktop"
-        run: sudo chroot "$ROOTFS_MOUNT" /root/sheng-build/in-chroot/20-desktop.sh
+        run: sudo chroot "$ROOTFS_MOUNT" /root/vermeer-build/in-chroot/20-desktop.sh
 
       - name: "[chroot] Install Browser"
-        run: sudo chroot "$ROOTFS_MOUNT" /root/sheng-build/in-chroot/25-browser.sh
+        run: sudo chroot "$ROOTFS_MOUNT" /root/vermeer-build/in-chroot/25-browser.sh
 
       - name: "[chroot] Install Device Packages"
-        run: sudo chroot "$ROOTFS_MOUNT" /root/sheng-build/in-chroot/30-device-packages.sh
+        run: sudo chroot "$ROOTFS_MOUNT" /root/vermeer-build/in-chroot/30-device-packages.sh
 
       - name: Prepare Password File
         run: |
-          # ROOTFS_PASSWORD 由 Verify Arguments 写入 $GITHUB_ENV（password 输入项 > secret > 空）
           if [ -n "${ROOTFS_PASSWORD:-}" ]; then
             printf '%s' "$ROOTFS_PASSWORD" | sudo tee "$ROOTFS_MOUNT/root/build.pw" >/dev/null
             sudo chmod 600 "$ROOTFS_MOUNT/root/build.pw"
@@ -429,18 +448,17 @@ jobs:
           fi
 
       - name: "[chroot] Configure System"
-        run: sudo chroot "$ROOTFS_MOUNT" /root/sheng-build/in-chroot/40-system-config.sh
+        run: sudo chroot "$ROOTFS_MOUNT" /root/vermeer-build/in-chroot/40-system-config.sh
 
       - name: "[chroot] Verify Image"
-        run: sudo chroot "$ROOTFS_MOUNT" /root/sheng-build/in-chroot/90-verify.sh
+        run: sudo chroot "$ROOTFS_MOUNT" /root/vermeer-build/in-chroot/90-verify.sh
 
       - name: Cleanup Host Files
         if: always()
         run: |
           sudo rm -f "$ROOTFS_MOUNT/etc/resolv.conf" 2>/dev/null || true
           sudo rm -f "$ROOTFS_MOUNT/root/build.pw" 2>/dev/null || true
-          # 构建脚本与 deb 载荷不该留在出厂镜像里（90-verify 已跑完，可以安全删除）
-          sudo rm -rf "$ROOTFS_MOUNT/root/sheng-build" 2>/dev/null || true
+          sudo rm -rf "$ROOTFS_MOUNT/root/vermeer-build" 2>/dev/null || true
           sudo rm -rf "$ROOTFS_MOUNT/tmp/debs" 2>/dev/null || true
 
       - name: Unmount Virtual File Systems
@@ -478,15 +496,17 @@ jobs:
         if: always()
         run: |
           {
-            echo "## Ubuntu RootFS 构建结果"
+            echo "## Ubuntu RootFS 构建结果（vermeer）"
             echo ""
             echo "| 项 | 值 |"
             echo "|---|---|"
+            echo "| 设备 | 红米 K70 / POCO F6 Pro (vermeer, SM8550) |"
             echo "| Ubuntu | ${{ inputs.ubuntu_series }} |"
             echo "| 桌面环境 | ${{ inputs.desktop }}${{ inputs.plasma_mobile && ' (plasma-mobile)' || '' }} |"
             echo "| 浏览器 | ${{ inputs.browser }} |"
             echo "| 分区（PARTLABEL） | ${{ steps.parse.outputs.label }} |"
             echo "| 内核来源 | ${{ inputs.kernel_source }} |"
+            echo "| boot header | v${{ inputs.boot_header_version }} / pagesize ${{ inputs.boot_pagesize }} |"
             echo "| quiet boot | ${{ steps.parse.outputs.quiet_boot_enabled }} |"
             echo "| snap | 已禁用（snapd 不安装，nosnap.pref 已写入，构建末尾硬校验） |"
             echo "| rootfs.img | $(du -h rootfs.img 2>/dev/null | cut -f1 || echo 'N/A') |"

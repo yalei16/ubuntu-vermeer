@@ -1,10 +1,10 @@
 name: Validate
 
 # 本地（Windows）无法执行 bash/tar/python，因此把静态检查放到 CI：
-#   * 所有 shell 脚本与 PKGBUILD 的 bash 语法检查（bash -n）
-#   * shellcheck（warning 级）
-#   * workflow YAML 可解析性 + 输入项/工件名基本约束
-#   * 关键文件存在性（mkbootimg / sm8550.config / 包列表 / 设备包目录树）
+#   * 所有 shell 脚本的 bash 语法检查（bash -n）
+#   * shellcheck（warning 级，不阻断）
+#   * workflow YAML 可解析性
+#   * 关键文件存在性 + 设备常量一致性（vermeer）
 on:
   push:
   pull_request:
@@ -35,17 +35,47 @@ jobs:
           done
           exit $fail
 
+      - name: Python syntax check
+        run: |
+          mapfile -t files < <(git ls-files '*.py')
+          for f in "${files[@]}"; do
+            python3 -m py_compile "$f" || { echo "::error file=$f::python 语法错误"; exit 1; }
+          done
+          echo "已检查 ${#files[@]} 个 python 脚本"
+
       - name: mkbootimg / kernel config check
         run: |
-          # mkbootimg 是 AOSP 的 Python 脚本，这里只做可执行位与 shebang 检查
           head -n1 mkbootimg | grep -q '^#!' || { echo "::error::mkbootimg 缺少 shebang"; exit 1; }
-          test -f sm8550.config || { echo "::error::缺少 sm8550.config"; exit 1; }
-          echo "mkbootimg / sm8550.config 就位"
+          test -s vermeer-extra.config || { echo "::error::缺少 vermeer-extra.config（内核额外配置片段）"; exit 1; }
+          grep -q '^CONFIG_QRTR=y' vermeer-extra.config || { echo "::error::vermeer-extra.config 里没有 QRTR=y"; exit 1; }
+          echo "mkbootimg / vermeer-extra.config 就位"
+
+      - name: Device constants consistency
+        run: |
+          # 设备名与 DTB 名散落在脚本里是最容易出错的地方，这里做一次交叉断言
+          grep -q 'sm8550-xiaomi-vermeer.dtb' scripts/common/device-env.sh \
+            || { echo "::error::device-env.sh 里没有 vermeer DTB 名"; exit 1; }
+          grep -q 'Xlie-Electronic-Customs/linux' scripts/common/device-env.sh \
+            || { echo "::error::device-env.sh 里的内核仓库不是 XEC/linux"; exit 1; }
+          grep -q 'linux-firmware-xiaomi-vermeer' scripts/common/device-env.sh \
+            || { echo "::error::device-env.sh 里的固件仓库不是 linux-firmware-xiaomi-vermeer"; exit 1; }
+          # 不允许再有 sheng 的**功能性**字符串漏网（注释里提到上游项目名
+          # debian-sheng / archlinux-sheng / sheng-firmware 属历史来源说明，保留）
+          # 注意：排除本文件自身——它包含这些模式字面量。
+          if git ls-files '*.sh' '*.yml' | grep -v '^\.github/workflows/validate\.yml$' \
+             | xargs grep -n \
+               -e 'Image\.gz-dtb_sheng' -e '/root/sheng-build' \
+               -e 'sm8550-xiaomi-sheng' -e 'sheng-7\.2\.6' -e 'boot_sheng_' \
+               -e 'linux-xiaomi-sheng' -e 'firmware-xiaomi-sheng' ; then
+            echo "::error::仍有 sheng 专有字符串残留（见上）"
+            exit 1
+          fi
+          echo "设备常量一致性检查通过"
 
       - name: shellcheck
         run: |
           mapfile -t files < <(git ls-files '*.sh')
-          shellcheck --severity=warning --exclude=SC1090,SC1091 "${files[@]}" || {
+          shellcheck --severity=warning --exclude=SC1090,SC1091,SC1091 "${files[@]}" || {
             echo "::warning::shellcheck 报告了问题（不阻断构建，请人工确认）"
           }
 
@@ -66,12 +96,70 @@ jobs:
           sys.exit(bad)
           PY
 
-      - name: Package lists & device trees
+      - name: Package lists & package skeletons
         run: |
           for f in scripts/lists/base.list scripts/lists/gnome.list scripts/lists/kde.list; do
             test -s "$f" || { echo "::error::包列表为空: $f"; exit 1; }
           done
-          test -d alsa-xiaomi-sheng/usr/share/alsa/ucm2/Xiaomi/sheng || { echo "::error::缺少 ASoC UCM2 配置"; exit 1; }
-          test -d firmware-xiaomi-sheng/DEBIAN || { echo "::error::缺少 firmware 包骨架"; exit 1; }
-          test -d sheng-devauth/usr/lib/systemd/system || { echo "::error::缺少 sheng-devauth unit"; exit 1; }
+          test -d firmware-xiaomi-vermeer/DEBIAN || { echo "::error::缺少 firmware 包骨架"; exit 1; }
+          test -d linux-xiaomi-vermeer/DEBIAN || { echo "::error::缺少 kernel 包骨架"; exit 1; }
+          grep -q '^Package: firmware-xiaomi-vermeer' firmware-xiaomi-vermeer/DEBIAN/control \
+            || { echo "::error::firmware control 的包名不对"; exit 1; }
+          grep -q '^Package: linux-xiaomi-vermeer' linux-xiaomi-vermeer/DEBIAN/control \
+            || { echo "::error::kernel control 的包名不对"; exit 1; }
           echo "包列表与设备包目录树检查通过"
+
+  bootimg-selftest:
+    # 用一份假的"内核+DTB"跑真实的 11-make-bootimg.sh，再解析产物：
+    # 这样 header v4（K70 用）与 header v0（sheng 用）两条分支都被真跑过，
+    # 而不是等 40 分钟的内核编完才发现参数写错。
+    name: boot.img selftest (v4 + v0)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq python3 file
+
+      - name: Build & analyze boot.img (header v4)
+        run: |
+          chmod +x scripts/host/11-make-bootimg.sh scripts/host/12-analyze-bootimg.py
+          python3 - <<'PY'
+          import struct
+          # 伪内核：任意字节 + 尾部一份最小 FDT 头（魔数 0xd00dfeed）
+          open('fake-kernel','wb').write(b'KERNEL' * 100 + struct.pack('>I', 0xd00dfeed) + b'\x00' * 60)
+          PY
+          PARTITION_LABEL=linux QUIET_BOOT=false BOOT_HEADER_VERSION=4 BOOT_PAGESIZE=4096 \
+            ./scripts/host/11-make-bootimg.sh fake-kernel
+          python3 scripts/host/12-analyze-bootimg.py boot.img
+          python3 - <<'PY'
+          import struct
+          d = open('boot.img','rb').read()
+          assert d[:8] == b'ANDROID!', 'magic 不对'
+          ver = struct.unpack_from('<I', d, 0x28)[0]
+          assert ver == 4, f'header_version 应为 4，实际 {ver}'
+          print('  [ OK ] header_version = 4')
+          cmd = d[0x2C:0x2C+1536].split(b'\x00')[0].decode()
+          assert cmd.startswith('root=PARTLABEL=linux'), f'cmdline 不对: {cmd}'
+          print(f'  [ OK ] cmdline = {cmd}')
+          PY
+
+      - name: Build & analyze boot.img (header v0, 兼容 sheng 老参数)
+        run: |
+          rm -f boot.img
+          PARTITION_LABEL=userdata QUIET_BOOT=true BOOT_HEADER_VERSION=0 BOOT_PAGESIZE=4096 \
+            BOOT_TAGS_OFFSET=0x01e00000 \
+            ./scripts/host/11-make-bootimg.sh fake-kernel
+          python3 scripts/host/12-analyze-bootimg.py boot.img
+          python3 - <<'PY'
+          import struct
+          d = open('boot.img','rb').read()
+          ps = struct.unpack_from('<I', d, 0x24)[0]
+          assert ps == 4096, f'pagesize 应为 4096，实际 {ps}'
+          cmd = d[0x40:0x40+512].split(b'\x00')[0].decode()
+          assert cmd.startswith('root=PARTLABEL=userdata'), f'cmdline 不对: {cmd}'
+          assert 'quiet splash' in cmd, 'quiet_boot=true 时应有 quiet splash'
+          print(f'  [ OK ] pagesize={ps} cmdline={cmd}')
+          PY

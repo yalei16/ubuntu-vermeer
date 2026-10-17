@@ -1,0 +1,12 @@
+Package: firmware-xiaomi-vermeer
+Version: 20260905
+Architecture: arm64
+Maintainer: yalei16
+Conflicts: linux-firmware
+Replaces: linux-firmware
+Description: Firmware blobs & configs for Xiaomi Redmi K70 / POCO F6 Pro (vermeer)
+  WCN7850 (ath12k) WiFi/BT firmware, Adreno A740 zap/sqe, IAS/VIDEO/VPU/CAMERA ICP
+  blobs, aw882xx ACF and Goodix touch firmware, extracted from the device vendor
+  partition. Binary payload is downloaded at build time from
+  Xlie-Electronic-Customs/linux-firmware-xiaomi-vermeer; it is not redistributed
+  by this repository.
