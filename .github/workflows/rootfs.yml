@@ -150,6 +150,11 @@ on:
         required: false
         type: string
         default: 'main'
+      append_dtb:
+        description: '把 DTB 拼到内核尾部。原厂 K70 boot.img 的 kernel 尾部并没有 DTB（ABL 从 vendor_boot/dtbo 取）；主线移植按 pmOS 的 append_dtb 做法拼进去，若实测 ABL 忽略它，则改成 false'
+        required: false
+        type: boolean
+        default: true
       boot_header_version:
         description: 'boot.img 头版本（K70 原厂是 4；务必用 scripts/host/12-analyze-bootimg.py 核对原厂 boot.img）'
         required: false
@@ -202,6 +207,7 @@ jobs:
       kernel_config_fragments: ${{ inputs.kernel_config_fragments }}
       firmware_repo: ${{ inputs.firmware_repo }}
       firmware_branch: ${{ inputs.firmware_branch }}
+      append_dtb: ${{ inputs.append_dtb }}
 
   build-rootfs:
     name: Assemble Ubuntu RootFS
@@ -338,9 +344,10 @@ jobs:
           BOOT_HEADER_VERSION: ${{ inputs.boot_header_version }}
           BOOT_PAGESIZE: ${{ inputs.boot_pagesize }}
           EXTRA_CMDLINE: ${{ inputs.extra_cmdline }}
+          APPEND_DTB: ${{ inputs.append_dtb }}
         run: |
           chmod +x scripts/host/11-make-bootimg.sh
-          ./scripts/host/11-make-bootimg.sh Image.gz-dtb_vermeer
+          ./scripts/host/11-make-bootimg.sh kernel-dtb_vermeer
 
       - name: Verify boot.img Header
         run: |

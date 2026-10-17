@@ -42,7 +42,7 @@ if [[ -d "$REPO_ROOT/debs" ]]; then
   log "已拷入 $(find "$MOUNT/tmp/debs" -name '*.deb' | wc -l) 个 deb 到 /tmp/debs"
 fi
 
-# 其余 payload（boot.img / Image.gz-dtb_vermeer 等）
+# 其余 payload（boot.img / kernel-dtb_vermeer 等）
 for extra in "$@"; do
   [[ -e "$extra" ]] || { warn "payload 不存在，跳过: $extra"; continue; }
   cp -a "$extra" "$MOUNT/root/vermeer-build/"

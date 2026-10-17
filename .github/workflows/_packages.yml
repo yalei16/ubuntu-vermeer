@@ -42,6 +42,11 @@ on:
         required: false
         type: string
         default: 'main'
+      append_dtb:
+        description: '把 DTB 拼到内核尾部（pmOS 的 append_dtb 做法；原厂 boot.img 里没有 DTB，若 ABL 从 vendor_boot 取 DT 则设为 false）'
+        required: false
+        type: boolean
+        default: true
     outputs:
       kernel_version:
         description: 'custom_build 时的内核版本'
@@ -83,6 +88,11 @@ on:
         required: false
         type: string
         default: 'main'
+      append_dtb:
+        description: 'DTB 拼到内核尾部（默认 true）'
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -128,6 +138,7 @@ jobs:
           KERNEL_REPO: ${{ inputs.kernel_repo }}
           KERNEL_BRANCH: ${{ inputs.kernel_branch }}
           KERNEL_CONFIG_FRAGMENTS: ${{ inputs.kernel_config_fragments }}
+          APPEND_DTB: ${{ inputs.append_dtb }}
         run: |
           chmod +x scripts/packages/build-kernel.sh
           ./scripts/packages/build-kernel.sh
@@ -146,7 +157,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: kernel-custom-image
-          path: Image.gz-dtb_vermeer
+          path: kernel-dtb_vermeer
           retention-days: 3
           if-no-files-found: error
 

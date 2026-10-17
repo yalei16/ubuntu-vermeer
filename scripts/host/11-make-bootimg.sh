@@ -23,7 +23,7 @@
 #   EXTRA_CMDLINE        追加到 cmdline 末尾（例如 earlycon 调试）
 #   RAMDISK              可选；存在则作为 ramdisk 打包（本方案默认不用 initramfs）
 #
-# 用法: scripts/host/11-make-bootimg.sh [Image.gz-dtb_vermeer 路径]
+# 用法: scripts/host/11-make-bootimg.sh [kernel-dtb_vermeer 路径]
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../common/distro-env.sh
@@ -46,11 +46,21 @@ RAMDISK="${RAMDISK:-}"
 [[ -f "$KERNEL_IMAGE" ]] || die "内核镜像不存在: $KERNEL_IMAGE"
 [[ -f mkbootimg ]] || die "仓库内缺少 mkbootimg"
 
-# 自检：拼接镜像尾部必须是一份 FDT（DTB 魔数 0xd00dfeed）。
-# 忘记拼接、或把顺序搞反（dtb 在前）时，这一步能在构建期就报出来，
-# 而不是等刷完机器不开机再回头查。
-if ! tail -c 65536 "$KERNEL_IMAGE" | od -An -tx1 -v | tr -d ' \n' | grep -q 'd00dfeed'; then
-  warn "在 $KERNEL_IMAGE 的尾部 64 KiB 内没有找到 FDT 魔数（d00dfeed），DTB 可能没拼进去"
+# 自检 1：header v4 的 kernel 必须是**未压缩**的 Image（K70 原厂实测首字节是 MZ）。
+# 压缩过的内核在 ABL 上不会解压，表现为黑屏/直接回 fastboot。
+head4="$(head -c 2 "$KERNEL_IMAGE" | od -An -tx1 | tr -d ' \n')"
+if [[ "$head4" == "1f8b" ]]; then
+  die "$KERNEL_IMAGE 是 gzip 压缩的内核（1f 8b）；header v4 需要未压缩的 Image"
+fi
+log "kernel 首字节: $head4（4d5a = MZ / 未压缩 Image，符合 v4）"
+
+# 自检 2：APPEND_DTB=true 时，拼接镜像尾部必须是一份 FDT（DTB 魔数 0xd00dfeed）。
+if [[ "${APPEND_DTB:-true}" == "true" ]]; then
+  if ! tail -c 65536 "$KERNEL_IMAGE" | od -An -tx1 -v | tr -d ' \n' | grep -q 'd00dfeed'; then
+    warn "在 $KERNEL_IMAGE 的尾部 64 KiB 内没有找到 FDT 魔数（d00dfeed），DTB 可能没拼进去"
+  fi
+else
+  log "APPEND_DTB=false：不检查尾部 FDT（DTB 由 vendor_boot/dtbo 提供）"
 fi
 
 CMDLINE="root=PARTLABEL=${PARTITION_LABEL} rootwait"

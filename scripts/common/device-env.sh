@@ -19,8 +19,10 @@ export DEVICE_DT_MODEL="${DEVICE_DT_MODEL:-Poco F6 Pro}"
 export DEFAULT_KERNEL_REPO="${DEFAULT_KERNEL_REPO:-https://github.com/Xlie-Electronic-Customs/linux}"
 export DEFAULT_KERNEL_BRANCH="${DEFAULT_KERNEL_BRANCH:-master}"
 export DEVICE_DTB="${DEVICE_DTB:-sm8550-xiaomi-vermeer.dtb}"
-# 拼接好的内核镜像（Image.gz + DTB），mkbootimg 的 --kernel 输入
-export DEVICE_KERNEL_IMAGE="${DEVICE_KERNEL_IMAGE:-Image.gz-dtb_vermeer}"
+# 拼接好的内核镜像（Image [+ DTB]），mkbootimg 的 --kernel 输入
+# 注意：K70 原厂 boot.img 里的 kernel 是**未压缩**的 Image（开头是 EFI 的 "MZ"），
+# 不是 Image.gz —— 见 docs/移植对照.md 第 6 节的实测记录
+export DEVICE_KERNEL_IMAGE="${DEVICE_KERNEL_IMAGE:-kernel-dtb_vermeer}"
 # 内核配置片段：相对内核树 arch/arm64/configs/，按顺序叠加在 defconfig 之上
 export KERNEL_CONFIG_FRAGMENTS="${KERNEL_CONFIG_FRAGMENTS:-sm8550.config hardening.config}"
 # 本仓库自己的额外片段（相对仓库根），最后叠加，用于把 =m 的 modem/IPA 链路提为 =y

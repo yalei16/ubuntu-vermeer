@@ -5,9 +5,9 @@
 #   * sheng 的上游内核仓库自带一份可直接 install 成 .config 的 sm8550.config；
 #     XEC 树没有 vermeer 的 defconfig，只有 defconfig + sm8550.config + hardening.config
 #     三个**片段**，因此必须走 scripts/kconfig/merge_config.sh 合并（见 docs/移植对照.md）
-#   * sheng 树产出 Image.gz；XEC 树文档化的产物是未压缩的 Image，这里统一
-#     `make Image` 后自己 gzip，避免依赖 CONFIG_KERNEL_GZIP
-#   * 产物名 / deb 名 → linux-xiaomi-vermeer、Image.gz-dtb_vermeer
+#   * sheng 树产出 Image.gz；而 K70 原厂 boot.img 里的 kernel 是**未压缩 Image**
+#     （实测首字节 MZ），所以这里统一 `make Image` 后原样打包，不做 gzip
+#   * 产物名 / deb 名 → linux-xiaomi-vermeer、kernel-dtb_vermeer
 #
 # 需要环境变量（均有默认值，见 scripts/common/device-env.sh）：
 #   KERNEL_REPO / KERNEL_BRANCH
@@ -103,12 +103,23 @@ install -Dm644 "$DTB"                      "$PKGDIR/boot/dtb-$KVER.dtb"
 install -Dm644 "$SRC/.config"              "$PKGDIR/boot/config-$KVER"
 install -Dm644 "$SRC/System.map"           "$PKGDIR/boot/System.map-$KVER"
 
-# mkbootimg 用的拼接镜像（Image.gz + DTB）。
-# 顺序必须是「内核在前、DTB 在后」：ABL 从内核镜像尾部取 DTB，
-# 同时 DTB 里的 qcom,msm-id / qcom,board-id 决定 ABL 是否选中这块板子。
-gzip -9 -c "$SRC/arch/arm64/boot/Image" > "${SRC}/Image.gz"
-cat "${SRC}/Image.gz" "$DTB" > "$JOINED"
+# mkbootimg 用的拼接镜像。
+#   * K70 原厂 boot.img 的 kernel 是**未压缩 Image**（首字节 "MZ" = EFI PE 头），
+#     所以这里不做 gzip —— 压缩过的 Image.gz 交给 ABL 只会得到"黑屏/直接回 fastboot"。
+#   * DTB 是否拼在 Image 尾部由 APPEND_DTB 控制（默认 true）：原厂 boot.img 里
+#     kernel 尾部并没有 FDT，DTB 是 ABL 从 vendor_boot/dtbo 取的；
+#     主线的做法是把 DTB 拼在内核尾部（pmOS 的 append_dtb）。两种都生产，
+#     由真机验证决定，详见 docs/移植对照.md 第 6 节。
+APPEND_DTB="${APPEND_DTB:-true}"
+IMAGE_RAW="$SRC/arch/arm64/boot/Image"
+install -Dm644 "$IMAGE_RAW" "$JOINED"
+if [[ "$APPEND_DTB" == "true" ]]; then
+  cat "$DTB" >> "$JOINED"
+else
+  echo "[build-kernel] APPEND_DTB=false：只打包裸 Image（DTB 需由 vendor_boot 提供）"
+fi
 echo "[build-kernel] 拼接镜像: $JOINED ($(du -h "$JOINED" | cut -f1))"
+echo "[build-kernel] Image 头部: $(head -c 4 "$JOINED" | od -An -tx1 | tr -d ' \n')（应为 4d5a…=MZ，未压缩）"
 
 mkdir -p "$PKGDIR/DEBIAN"
 cat > "$PKGDIR/DEBIAN/control" <<EOF

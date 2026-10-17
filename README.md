@@ -44,6 +44,7 @@
 | **firmware_repo / firmware_branch** | XEC 固件仓库 / `main` | 固件在 `xiaomi-vermeer/` 子目录 |
 | **boot_header_version** | `4` | K70 原厂 boot.img 是 GKI header v4。**务必用 `12-analyze-bootimg.py` 对原厂镜像核对**；sheng 是 v0，照抄会 `invalid boot image` |
 | **boot_pagesize** | `4096` | 同上，以实测为准 |
+| **append_dtb** | `true` | 把 DTB 拼到内核尾部（pmOS 的 append_dtb）。原厂 boot.img 的内核尾部并没有 DTB（ABL 从 vendor_boot/dtbo 取），若实测发现 ABL 忽略追加的 DT，改成 `false` —— 详见 docs/移植对照.md §6 |
 | **extra_cmdline** | *(空)* | 追加内核 cmdline，例如 `earlycon console=ttyMSM0,115200` |
 | **install_modem_stack** | `true` | 尽力安装 rmtfs / tqftpserv / qrtr-tools（4G 的前置条件，见下） |
 | **rootfs_size** | `10G` | 镜像初始大小；构建后收缩，首启由 `x-systemd.growfs` 扩到分区实际大小 |
@@ -53,7 +54,8 @@
 ## 产物
 
 - `rootfs.img` —— ext4 文件系统镜像（**无分区表**），直接刷到一个分区
-- `boot.img` —— header v4（GKI），内核 `Image.gz` + `sm8550-xiaomi-vermeer.dtb` 拼接，
+- `boot.img` —— header v4（GKI，与原厂实测一致：pagesize 4096 / ramdisk 0），
+  内核是**未压缩** `Image` + `sm8550-xiaomi-vermeer.dtb` 拼接（可用 `append_dtb` 关掉），
   cmdline 为 `root=PARTLABEL=<分区>`；**不带 initramfs**（UFS/显示/触摸驱动都是 built-in）
 - Actions 里同时保留 `linux-xiaomi-vermeer.deb`、`firmware-xiaomi-vermeer.deb` 等中间产物
 
