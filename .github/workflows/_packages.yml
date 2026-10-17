@@ -161,6 +161,16 @@ jobs:
           retention-days: 3
           if-no-files-found: error
 
+      # 单独把 DTB 传一份：做 vendor_boot 只需要这几十 KB，不用去拖 87 MB 的内核 deb
+      - name: Upload Kernel DTB
+        if: inputs.kernel_source == 'custom_build'
+        uses: actions/upload-artifact@v7
+        with:
+          name: kernel-custom-dtb
+          path: linux/arch/arm64/boot/dts/qcom/sm8550-xiaomi-vermeer.dtb
+          retention-days: 7
+          if-no-files-found: error
+
   build-fastrpc:
     name: Build fastrpc
     runs-on: ubuntu-24.04-arm
