@@ -102,21 +102,13 @@ on:
         required: false
         type: boolean
         default: true
-      kernel_source:
-        description: '内核来源：custom_build = 用 XEC/linux 自己编（推荐）；prebuilt = 从某个 release 取现成 boot.img'
-        required: true
-        type: choice
-        default: 'custom_build'
-        options:
-          - 'custom_build'
-          - 'prebuilt'
       kernel_repo:
-        description: '内核仓库（custom_build 时使用）'
+        description: '内核仓库（用 XEC/linux 编译；vermeer DTS/面板驱动只在这棵树里）'
         required: false
         type: string
         default: 'https://github.com/Xlie-Electronic-Customs/linux'
       kernel_branch:
-        description: '内核分支（vermeer DTS/面板驱动在这个树里）'
+        description: '内核分支'
         required: false
         type: string
         default: 'master'
@@ -125,31 +117,11 @@ on:
         required: false
         type: string
         default: 'sm8550.config hardening.config'
-      kernel_releases_repo:
-        description: 'prebuilt 时的 release 仓库（owner/repo）'
-        required: false
-        type: string
-        default: ''
-      kernel_boot_pattern:
-        description: 'prebuilt 时的 boot.img 文件名'
-        required: false
-        type: string
-        default: ''
-      kernel_release:
-        description: 'prebuilt 取哪个 release（留空取最新）'
-        required: false
-        type: string
-        default: ''
       firmware_repo:
         description: '设备固件仓库（固件在仓库的 xiaomi-vermeer/ 子目录下）'
         required: false
         type: string
         default: 'https://github.com/Xlie-Electronic-Customs/linux-firmware-xiaomi-vermeer'
-      firmware_branch:
-        description: '固件仓库分支'
-        required: false
-        type: string
-        default: 'main'
       append_dtb:
         description: '把 DTB 拼到内核尾部。原厂 K70 boot.img 的 kernel 尾部并没有 DTB（ABL 从 vendor_boot/dtbo 取）；主线移植按 pmOS 的 append_dtb 做法拼进去，若实测 ABL 忽略它，则改成 false'
         required: false
@@ -201,12 +173,11 @@ jobs:
     name: Build Device Packages
     uses: ./.github/workflows/_packages.yml
     with:
-      kernel_source: ${{ inputs.kernel_source }}
+      kernel_source: 'custom_build'
       kernel_repo: ${{ inputs.kernel_repo }}
       kernel_branch: ${{ inputs.kernel_branch }}
       kernel_config_fragments: ${{ inputs.kernel_config_fragments }}
       firmware_repo: ${{ inputs.firmware_repo }}
-      firmware_branch: ${{ inputs.firmware_branch }}
       append_dtb: ${{ inputs.append_dtb }}
 
   build-rootfs:
@@ -244,12 +215,6 @@ jobs:
           if [ "${{ inputs.boot_mode }}" = "custom" ]; then
             if [ -z "${{ inputs.custom_partition }}" ]; then
               echo "::error::boot_mode=custom 时必须填写 custom_partition"
-              exit 1
-            fi
-          fi
-          if [ "${{ inputs.kernel_source }}" = "prebuilt" ]; then
-            if [ -z "${{ inputs.kernel_releases_repo }}" ] || [ -z "${{ inputs.kernel_boot_pattern }}" ]; then
-              echo "::error::kernel_source=prebuilt 时必须给出 kernel_releases_repo 与 kernel_boot_pattern（vermeer 上游没有现成 boot.img）"
               exit 1
             fi
           fi
@@ -312,32 +277,18 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq mmdebstrap curl git e2fsprogs file gzip
 
-      - name: "[Prebuilt] Download Kernel & boot.img"
-        if: inputs.kernel_source == 'prebuilt'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BOOT_IMG_PATTERN: ${{ inputs.kernel_boot_pattern }}
-          KERNEL_RELEASES_REPO: ${{ inputs.kernel_releases_repo }}
-          KERNEL_RELEASE: ${{ inputs.kernel_release }}
-        run: |
-          chmod +x scripts/host/10-fetch-kernel.sh
-          ./scripts/host/10-fetch-kernel.sh
-
       - name: "[Custom] Download Kernel Package"
-        if: inputs.kernel_source == 'custom_build'
         uses: actions/download-artifact@v8
         with:
           name: kernel-custom-deb
           path: debs
 
       - name: "[Custom] Download Kernel Image"
-        if: inputs.kernel_source == 'custom_build'
         uses: actions/download-artifact@v8
         with:
           name: kernel-custom-image
 
       - name: "[Custom] Generate boot.img"
-        if: inputs.kernel_source == 'custom_build'
         env:
           PARTITION_LABEL: ${{ steps.parse.outputs.label }}
           QUIET_BOOT: ${{ steps.parse.outputs.quiet_boot_enabled }}
@@ -423,7 +374,7 @@ jobs:
           QUIET_BOOT='${{ steps.parse.outputs.quiet_boot_enabled }}'
           BOOT_MODE='${{ inputs.boot_mode }}'
           PARTITION_LABEL='${{ steps.parse.outputs.label }}'
-          KERNEL_SOURCE='${{ inputs.kernel_source }}'
+          KERNEL_SOURCE='custom_build'
           INSTALL_MODEM_STACK='${{ inputs.install_modem_stack }}'
           EOF
           sudo chmod 600 "$ROOTFS_MOUNT/root/build.env"
@@ -512,7 +463,7 @@ jobs:
             echo "| 桌面环境 | ${{ inputs.desktop }}${{ inputs.plasma_mobile && ' (plasma-mobile)' || '' }} |"
             echo "| 浏览器 | ${{ inputs.browser }} |"
             echo "| 分区（PARTLABEL） | ${{ steps.parse.outputs.label }} |"
-            echo "| 内核来源 | ${{ inputs.kernel_source }} |"
+            echo "| 内核来源 | custom_build（XEC/linux） |"
             echo "| boot header | v${{ inputs.boot_header_version }} / pagesize ${{ inputs.boot_pagesize }} |"
             echo "| quiet boot | ${{ steps.parse.outputs.quiet_boot_enabled }} |"
             echo "| snap | 已禁用（snapd 不安装，nosnap.pref 已写入，构建末尾硬校验） |"

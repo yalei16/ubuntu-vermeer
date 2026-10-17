@@ -37,10 +37,8 @@
 | **boot_mode** | `dual (linux)` | `single (userdata)` / `dual (linux)` / `custom`；决定 fstab 的 `PARTLABEL=` |
 | **custom_partition** | *(空)* | 仅 `boot_mode=custom` 需要 |
 | **quiet_boot** | `true` | Plymouth 安静启动（`server` 模式忽略） |
-| **kernel_source** | `custom_build` | **vermeer 没有现成的 boot.img release**，默认自己编（约 40–60 分钟）。`prebuilt` 仅在你自己发布过 boot.img 时才用 |
-| **kernel_repo / kernel_branch** | `Xlie-Electronic-Customs/linux` / `master` | 只在这棵树里有 `sm8550-xiaomi-vermeer.dts` 与 `panel-n11-42-02-0a-dsc.c` |
+| **kernel_repo / kernel_branch** | `Xlie-Electronic-Customs/linux` / `master` | 内核固定走 **custom_build**（自己编 40–60 分钟）：vermeer 没有现成的 boot.img release，且这里只有这棵树有 `sm8550-xiaomi-vermeer.dts` 与 `panel-n11-42-02-0a-dsc.c` |
 | **kernel_config_fragments** | `sm8550.config hardening.config` | 叠加在 `defconfig` 之上的树内片段（该树没有 vermeer_defconfig） |
-| **kernel_releases_repo / kernel_boot_pattern** | *(空)* | 仅 `kernel_source=prebuilt` 时需要 |
 | **firmware_repo / firmware_branch** | XEC 固件仓库 / `main` | 固件在 `xiaomi-vermeer/` 子目录 |
 | **boot_header_version** | `4` | K70 原厂 boot.img 是 GKI header v4。**务必用 `12-analyze-bootimg.py` 对原厂镜像核对**；sheng 是 v0，照抄会 `invalid boot image` |
 | **boot_pagesize** | `4096` | 同上，以实测为准 |
