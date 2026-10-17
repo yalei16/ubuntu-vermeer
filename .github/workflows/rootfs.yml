@@ -240,7 +240,8 @@ jobs:
             ""|*[!0-9GgMmKk]*) echo "::error::rootfs_size 只允许形如 10G / 8192M 的取值"; exit 1 ;;
           esac
           case "${{ inputs.extra_cmdline }}" in
-            ""|*[\;\|\&\$\`\(\)]*|\<*|\>*) echo "::error::extra_cmdline 不允许 shell 元字符"; exit 1 ;;
+            "") : ;;                                   # 空值合法（默认就是空）
+            *[\;\|\&\$\`\(\)]*|\<*|\>*) echo "::error::extra_cmdline 不允许 shell 元字符"; exit 1 ;;
           esac
 
       - name: Parse Arguments
