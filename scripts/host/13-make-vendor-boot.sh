@@ -121,18 +121,44 @@ if [[ "$BOTH" -eq 1 || ! -f "$WORK/vendor_ramdisk" ]]; then
   fi
 fi
 
+# 附带产一个「空 dtbo」：原厂 dtbo 里有 57 条 overlay（id/rev/custom 全 0 = 默认匹配），
+# ABL 可能把它们叠加到我们的主线 DT 上。真机上若遇到 DT 相关启动失败，
+# 把 B 槽的 dtbo 换成这个空表即可（A 槽的 Android 不受影响）。
+build_empty_dtbo() {
+  local out="$1"
+  log "生成 $out（空 overlay 表）"
+  "$PY" - "$(to_native "$out")" <<'PY'
+import struct
+import sys
+magic = 0xd7B7AB1E
+header_size, entry_size, count, entries_off, page_size, version = 32, 32, 0, 32, 4096, 0
+total = entries_off + entry_size * count
+blob = struct.pack(">8I", magic, total, header_size, entry_size, count,
+                   entries_off, page_size, version)
+blob += b"\x00" * (page_size - len(blob))
+open(sys.argv[1], "wb").write(blob)
+PY
+  "$PY" "$ANALYZER" "$(to_native "$out")" | sed 's/^/    /'
+}
+build_empty_dtbo "$OUT_DIR/dtbo-empty.img"
+
 cat <<EOF
 
 完成。产物：
   $OUT_DIR/vendor_boot-vermeer-noramdisk.img   ← 先试这个
 $( [[ -f "$OUT_DIR/vendor_boot-vermeer-stockrd.img" ]] && echo "  $OUT_DIR/vendor_boot-vermeer-stockrd.img     ← 备用（保留 Android ramdisk）" )
+$( [[ -f "$OUT_DIR/dtbo-empty.img" ]] && echo "  $OUT_DIR/dtbo-empty.img                     ← 备选：空 dtbo（阻止 ABL 把 Android 的 57 条 overlay 应用到主线 DT 上）" )
 
 刷写（写到非当前槽，保证 Android 那一槽完好）：
   fastboot flash vendor_boot_b $OUT_DIR/vendor_boot-vermeer-noramdisk.img
   fastboot flash boot_b        boot.img
   fastboot set_active b
 
+如果刷完直接回 fastboot / 报 DT 相关错误，再补一刀（把 B 槽的 overlay 清空）：
+  fastboot flash dtbo_b $OUT_DIR/dtbo-empty.img
+
 回滚：
   fastboot flash vendor_boot_b stock-vendor_boot.img
   fastboot flash boot_b        stock-boot.img
+  fastboot flash dtbo_b        stock-dtbo.img
 EOF

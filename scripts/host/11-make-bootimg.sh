@@ -58,10 +58,41 @@ case "$head4" in
   *)        warn "kernel 首字节 $head4 不是已知形态（预期 1f2003d5 或 4d5a）" ;;
 esac
 
-# 自检 2：APPEND_DTB=true 时，拼接镜像尾部必须是一份 FDT（DTB 魔数 0xd00dfeed）。
+# 自检 2：APPEND_DTB=true 时，拼接镜像尾部必须是一份**完整**的 FDT。
+# 判断方式：从文件尾往前找 FDT 魔数，要求「魔数偏移 + totalsize == 文件长度」，
+# 这样 138 KB 的 DTB（魔数在尾 64 KiB 之外）也能正确判定，不会误报。
+fdt_at_eof() {
+  local img="$1"
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$img" <<'PY'
+import struct, sys
+p = sys.argv[1]
+with open(p, "rb") as f:
+    f.seek(0, 2)
+    n = f.tell()
+    start = max(0, n - 16 * 1024 * 1024)
+    f.seek(start)
+    buf = f.read()
+i = buf.rfind(b"\xd0\x0d\xfe\xed")
+while i >= 0:
+    if i + 8 <= len(buf):
+        size = struct.unpack(">I", buf[i + 4:i + 8])[0]
+        if start + i + size == n:
+            sys.exit(0)
+    i = buf.rfind(b"\xd0\x0d\xfe\xed", 0, i)
+sys.exit(1)
+PY
+    return $?
+  fi
+  # 没有 python3 时退化为「尾部 4 MiB 内出现 FDT 魔数」
+  tail -c 4194304 "$img" | od -An -tx1 -v | tr -d ' \n' | grep -q 'd00dfeed'
+}
+
 if [[ "${APPEND_DTB:-true}" == "true" ]]; then
-  if ! tail -c 65536 "$KERNEL_IMAGE" | od -An -tx1 -v | tr -d ' \n' | grep -q 'd00dfeed'; then
-    warn "在 $KERNEL_IMAGE 的尾部 64 KiB 内没有找到 FDT 魔数（d00dfeed），DTB 可能没拼进去"
+  if ! fdt_at_eof "$KERNEL_IMAGE"; then
+    warn "在 $KERNEL_IMAGE 尾部没有找到「结束于文件末尾」的 FDT（DTB 可能没拼进去/被截断）"
+  else
+    log "尾部 FDT 校验通过（DTB 完整拼在 Image 之后）"
   fi
 else
   log "APPEND_DTB=false：不检查尾部 FDT（DTB 由 vendor_boot/dtbo 提供）"
