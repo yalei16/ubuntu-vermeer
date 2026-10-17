@@ -119,7 +119,17 @@ else
   echo "[build-kernel] APPEND_DTB=false：只打包裸 Image（DTB 需由 vendor_boot 提供）"
 fi
 echo "[build-kernel] 拼接镜像: $JOINED ($(du -h "$JOINED" | cut -f1))"
-echo "[build-kernel] Image 头部: $(head -c 4 "$JOINED" | od -An -tx1 | tr -d ' \n')（应为 4d5a…=MZ，未压缩）"
+# kernel 头部的合法形态（都必须是**未压缩**的）：
+#   1f2003d5 = arm64 Image 的 NOP 签名（CONFIG_EFI=n，XEC 树的 sm8550.config 明确这么设）
+#   4d5a     = "MZ"，带 EFI stub 的 Image（原厂 HyperOS 内核就是这样编的）
+#   1f8b     = gzip，**不能**直接给 header v4 的 boot.img
+head4="$(head -c 4 "$JOINED" | od -An -tx1 | tr -d ' \n')"
+case "$head4" in
+  1f2003d5) echo "[build-kernel] Image 头部: $head4（arm64 NOP 签名，CONFIG_EFI=n）✓" ;;
+  4d5a*)    echo "[build-kernel] Image 头部: $head4（MZ / EFI stub）✓" ;;
+  1f8b*)    echo "[build-kernel] 致命：Image 被 gzip 压缩了（1f 8b），header v4 不能用" >&2; exit 1 ;;
+  *)        echo "[build-kernel] 警告：Image 头部 $head4 不是已知形态（预期 1f2003d5 或 4d5a）" >&2 ;;
+esac
 
 mkdir -p "$PKGDIR/DEBIAN"
 cat > "$PKGDIR/DEBIAN/control" <<EOF

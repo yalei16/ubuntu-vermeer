@@ -57,7 +57,14 @@
 - `boot.img` —— header v4（GKI，与原厂实测一致：pagesize 4096 / ramdisk 0），
   内核是**未压缩** `Image` + `sm8550-xiaomi-vermeer.dtb` 拼接（可用 `append_dtb` 关掉），
   cmdline 为 `root=PARTLABEL=<分区>`；**不带 initramfs**（UFS/显示/触摸驱动都是 built-in）
-- Actions 里同时保留 `linux-xiaomi-vermeer.deb`、`firmware-xiaomi-vermeer.deb` 等中间产物
+- `linux-xiaomi-vermeer.deb` —— 内核 + 模块 + `/boot/dtb-<ver>.dtb`（做 vendor_boot 要用）
+- Actions 里同时保留 `firmware-xiaomi-vermeer.deb`、`kernel-dtb_vermeer` 等中间产物
+
+> **必须额外刷 vendor_boot**：实测 K70 原厂 `boot.img` 的内核区间里没有 DTB，
+> 设备树在 `vendor_boot.img` 里（dtb_size 3885971 / dtb_addr 0x1f00000）。
+> 只刷 boot.img，ABL 会把 Android 的 DT 交给主线内核 → 黑屏。
+> 用 `scripts/host/13-make-vendor-boot.sh` 以原厂 vendor_boot 为模板换进我们的 DTB
+> （已实测：用原厂 DTB 重打包的结果与原厂文件逐字节相同）。
 
 ## 设备状态（以主线内核为准）
 

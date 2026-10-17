@@ -46,13 +46,17 @@ RAMDISK="${RAMDISK:-}"
 [[ -f "$KERNEL_IMAGE" ]] || die "内核镜像不存在: $KERNEL_IMAGE"
 [[ -f mkbootimg ]] || die "仓库内缺少 mkbootimg"
 
-# 自检 1：header v4 的 kernel 必须是**未压缩**的 Image（K70 原厂实测首字节是 MZ）。
-# 压缩过的内核在 ABL 上不会解压，表现为黑屏/直接回 fastboot。
-head4="$(head -c 2 "$KERNEL_IMAGE" | od -An -tx1 | tr -d ' \n')"
-if [[ "$head4" == "1f8b" ]]; then
-  die "$KERNEL_IMAGE 是 gzip 压缩的内核（1f 8b）；header v4 需要未压缩的 Image"
-fi
-log "kernel 首字节: $head4（4d5a = MZ / 未压缩 Image，符合 v4）"
+# 自检 1：header v4 的 kernel 必须是**未压缩**的 Image。
+#   K70 原厂 kernel 首字节 4d5a（MZ，带 EFI stub）；
+#   XEC 主线树 CONFIG_EFI=n，首字节 1f2003d5（arm64 Image 的 NOP 签名）——两者都合法。
+#   唯一不能出现的是 gzip（1f8b），ABL 不会解压。
+head4="$(head -c 4 "$KERNEL_IMAGE" | od -An -tx1 | tr -d ' \n')"
+case "$head4" in
+  1f8b*) die "$KERNEL_IMAGE 是 gzip 压缩的内核（1f 8b）；header v4 需要未压缩的 Image" ;;
+  1f2003d5) log "kernel 首字节: $head4（arm64 NOP 签名，CONFIG_EFI=n）" ;;
+  4d5a*)    log "kernel 首字节: $head4（MZ / EFI stub）" ;;
+  *)        warn "kernel 首字节 $head4 不是已知形态（预期 1f2003d5 或 4d5a）" ;;
+esac
 
 # 自检 2：APPEND_DTB=true 时，拼接镜像尾部必须是一份 FDT（DTB 魔数 0xd00dfeed）。
 if [[ "${APPEND_DTB:-true}" == "true" ]]; then

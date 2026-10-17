@@ -48,7 +48,9 @@ jobs:
           head -n1 mkbootimg | grep -q '^#!' || { echo "::error::mkbootimg 缺少 shebang"; exit 1; }
           test -s vermeer-extra.config || { echo "::error::缺少 vermeer-extra.config（内核额外配置片段）"; exit 1; }
           grep -q '^CONFIG_QRTR=y' vermeer-extra.config || { echo "::error::vermeer-extra.config 里没有 QRTR=y"; exit 1; }
-          echo "mkbootimg / vermeer-extra.config 就位"
+          test -x scripts/host/13-make-vendor-boot.sh || chmod +x scripts/host/13-make-vendor-boot.sh
+          test -f scripts/host/12-analyze-bootimg.py || { echo "::error::缺少 12-analyze-bootimg.py"; exit 1; }
+          echo "mkbootimg / vermeer-extra.config / boot 镜像工具就位"
 
       - name: Device constants consistency
         run: |
